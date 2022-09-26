@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"proto/pkg/prime"
+
+	"github.com/matryer/is"
 )
 
 func TestHandle(t *testing.T) {
@@ -72,15 +74,11 @@ func TestHandle(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			is := is.New(t)
 			rw := bytes.NewBufferString(tt.input)
 			prime.Handle(context.Background(), rw)
 
-			actual := rw.String()
-			wanted := fmt.Sprintf("%s\n", tt.wantOut)
-
-			if actual != wanted {
-				t.Fatalf("\n:: wanted: |[%s]|\n:: got: |[%s]|\n", wanted, actual)
-			}
+			is.Equal(rw.String(), fmt.Sprintf("%s\n", tt.wantOut))
 		})
 	}
 }
