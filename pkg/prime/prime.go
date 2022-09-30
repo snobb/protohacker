@@ -1,14 +1,14 @@
 package prime
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"math"
 	"net"
+
+	"proto/pkg/iotools"
 )
 
 const errorMethod = "error"
@@ -21,34 +21,6 @@ type Request struct {
 type Response struct {
 	Method string `json:"method"`
 	Prime  bool   `json:"prime"`
-}
-
-func getLine(ctx context.Context, r io.Reader) <-chan []byte {
-	ch := make(chan []byte)
-
-	scanner := bufio.NewScanner(r)
-	go func() {
-		defer close(ch)
-
-		for idx := 0; scanner.Scan(); idx++ {
-			select {
-			case <-ctx.Done():
-				log.Println("getLines: got canceled")
-				return
-
-			default:
-			}
-
-			bytes := scanner.Bytes()
-			if len(bytes) == 0 {
-				break
-			}
-
-			ch <- bytes
-		}
-	}()
-
-	return ch
 }
 
 func getResponse(req Request) Response {
@@ -73,7 +45,7 @@ func getResponse(req Request) Response {
 func Handle(ctx context.Context, conn net.Conn) {
 	enc := json.NewEncoder(conn)
 
-	for line := range getLine(ctx, conn) {
+	for line := range iotools.GetLine(ctx, conn) {
 		select {
 		case <-ctx.Done():
 			log.Println("PrimeHandle: got canceled")

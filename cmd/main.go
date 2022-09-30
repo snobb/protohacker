@@ -6,6 +6,8 @@ import (
 	"net"
 	"time"
 
+	"proto/pkg/chat"
+	"proto/pkg/chat/broker"
 	"proto/pkg/echo"
 	"proto/pkg/price"
 	"proto/pkg/prime"
@@ -15,7 +17,7 @@ import (
 var version = "devel"
 
 const (
-	problem = 2
+	problem = 3
 	port    = 8080
 )
 
@@ -55,5 +57,12 @@ func main() {
 
 	case 3:
 		// Task 03 - https://protohackers.com/problem/3
+		broker := broker.New()
+		err := tcpserver.Listen(ctx, port, func(ctx context.Context, conn net.Conn) {
+			chat.NewSession(broker).Handle(ctx, conn)
+		})
+		if err != nil {
+			log.Println("Error: [Listen]:", err.Error())
+		}
 	}
 }
