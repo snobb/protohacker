@@ -2,7 +2,6 @@ export GO111MODULE=on
 export GOVCS=*:git
 
 TARGET   := protohack
-NAME     := go-service
 MAIN     := ./cmd/main.go
 BIN      := ./bin
 TIMEOUT  := 15
@@ -13,7 +12,7 @@ REVHASH  := ${shell git log -1 --format="%h"}
 LDFLAGS  := -X main.version=${BRANCH}.${REVCNT}.${REVHASH}
 CFLAGS   := --ldflags '${LDFLAGS}' -o $(BIN)/$(TARGET)
 
-all: generate lint test build
+all: lint test build
 
 lint:
 	golangci-lint run
@@ -39,9 +38,6 @@ build-linux: clean
 
 build-rpi:
 	GOOS=linux GOARCH=arm GOARM=5 go build ${CFLAGS} -o $(BIN)/$(TARGET) $(MAIN)
-
-generate:
-	go generate ./pkg/...
 
 clean:
 	-rm -rf $(BIN)

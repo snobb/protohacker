@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"proto/pkg/prime"
+	"proto/pkg/tcpserver"
 
 	"github.com/matryer/is"
 )
@@ -75,10 +76,14 @@ func TestHandle(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			is := is.New(t)
-			rw := bytes.NewBufferString(tt.input)
-			prime.Handle(context.Background(), rw)
+			conn := &tcpserver.TestConn{
+				Recorder: tcpserver.Recorder{
+					In: bytes.NewBufferString(tt.input),
+				},
+			}
+			prime.Handle(context.Background(), conn)
 
-			is.Equal(rw.String(), fmt.Sprintf("%s\n", tt.wantOut))
+			is.Equal(conn.Recorder.Out.String(), fmt.Sprintf("%s\n", tt.wantOut))
 		})
 	}
 }

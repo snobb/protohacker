@@ -13,20 +13,8 @@ import (
 
 	"proto/pkg/price"
 	"proto/pkg/price/message"
+	"proto/pkg/tcpserver"
 )
-
-type Recorder struct {
-	In  bytes.Buffer
-	Out bytes.Buffer
-}
-
-func (r *Recorder) Read(p []byte) (n int, err error) {
-	return r.In.Read(p)
-}
-
-func (r *Recorder) Write(p []byte) (n int, err error) {
-	return r.Out.Write(p)
-}
 
 func TestHandle_Handle(t *testing.T) {
 	tests := []struct {
@@ -124,14 +112,14 @@ func TestHandle_Handle(t *testing.T) {
 			ctx := context.Background()
 			is := is.New(t)
 
-			rec := &Recorder{}
+			rec := &tcpserver.Recorder{In: &bytes.Buffer{}}
 			for _, msg := range tt.inserts {
-				err := binary.Write(&rec.In, binary.BigEndian, msg)
+				err := binary.Write(rec.In, binary.BigEndian, msg)
 				is.NoErr(err)
 			}
 
-			handler := price.Handler{IO: rec}
-			handler.Handle(ctx)
+			handler := price.Handler{}
+			handler.Handle(ctx, rec)
 
 			var res int32
 			err := binary.Read(&rec.Out, binary.BigEndian, &res)

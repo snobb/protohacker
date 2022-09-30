@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"math"
+	"net"
 )
 
 const errorMethod = "error"
@@ -67,10 +69,11 @@ func getResponse(req Request) Response {
 	return resp
 }
 
-func Handle(ctx context.Context, rw io.ReadWriter) {
-	enc := json.NewEncoder(rw)
+// Handle handles a new tcp connection
+func Handle(ctx context.Context, conn net.Conn) {
+	enc := json.NewEncoder(conn)
 
-	for line := range getLine(ctx, rw) {
+	for line := range getLine(ctx, conn) {
 		select {
 		case <-ctx.Done():
 			log.Println("PrimeHandle: got canceled")
@@ -90,8 +93,9 @@ func Handle(ctx context.Context, rw io.ReadWriter) {
 		resp := getResponse(req)
 
 		if err := enc.Encode(resp); err != nil {
-			log.Printf("Failed to encode response - %s: %v\n", err.Error(), resp)
+			err = fmt.Errorf("failed to encode response - %w: %v", err, resp)
 			_ = enc.Encode(Response{Method: errorMethod})
+			log.Printf("Error encoding: %s", err.Error())
 			return
 		}
 
