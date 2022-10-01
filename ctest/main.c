@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <arpa/inet.h>
 
 struct Message {
     char type;
@@ -7,18 +8,10 @@ struct Message {
     int32_t data;
 } __attribute__((packed));
 
-static inline int32_t convert(int32_t data) {
-    data = ((data & 0xff) << 24)
-           ^ (((data >> 8) & 0xff) << 16)
-           ^ (((data >> 16) & 0xff) << 8)
-           ^ (((data >> 24) & 0xff));
-    return data;
-}
-
 static inline struct Message message_from_buf(const char buf[]) {
     struct Message msg = *(struct Message *)buf;
-    msg.time = convert(msg.time);
-    msg.data = convert(msg.data);
+    msg.time = ntohl(msg.time);
+    msg.data = ntohl(msg.data);
 
     return msg;
 }
