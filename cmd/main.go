@@ -14,12 +14,13 @@ import (
 	"proto/pkg/echo"
 	"proto/pkg/price"
 	"proto/pkg/prime"
+	"proto/pkg/proxy"
 	"proto/pkg/tcpserver"
 	"proto/pkg/udpserver"
 )
 
 const (
-	problem = 4
+	problem = 5
 	port    = 8080
 	udpPort = 5000
 )
@@ -30,7 +31,7 @@ func main() {
 
 	switch problem {
 	case 0:
-		// Task 00 - https://protohackers.com/problem/0
+		// Task 00 - Smoke test - https://protohackers.com/problem/0
 		ctx, cancel := context.WithTimeout(ctx, 1*time.Minute)
 		if err := tcpserver.Listen(ctx, port, echo.Handle); err != nil {
 			log.Println("Error: [Listen]:", err.Error())
@@ -38,7 +39,7 @@ func main() {
 		cancel()
 
 	case 1:
-		// Task 01 - https://protohackers.com/problem/1
+		// Task 01 - Prime Time - https://protohackers.com/problem/1
 		ctx, cancel := context.WithTimeout(ctx, 1*time.Minute)
 		if err := tcpserver.Listen(ctx, port, prime.Handle); err != nil {
 			log.Println("Error: [Listen]:", err.Error())
@@ -46,7 +47,7 @@ func main() {
 		cancel()
 
 	case 2:
-		// Task 02 - https://protohackers.com/problem/2
+		// Task 02 - Means to an End - https://protohackers.com/problem/2
 		ctx, cancel := context.WithTimeout(ctx, 1*time.Minute)
 		err := tcpserver.Listen(ctx, port, func(ctx context.Context, conn net.Conn) {
 			(&price.Handler{}).Handle(ctx, conn)
@@ -57,7 +58,7 @@ func main() {
 		cancel()
 
 	case 3:
-		// Task 03 - https://protohackers.com/problem/3
+		// Task 03 - Budget Chat - https://protohackers.com/problem/3
 		broker := broker.New()
 		err := tcpserver.Listen(ctx, port, func(ctx context.Context, conn net.Conn) {
 			chat.NewSession(broker).Handle(ctx, conn)
@@ -67,7 +68,7 @@ func main() {
 		}
 
 	case 4:
-		// Task 04 - https://protohackers.com/problem/4
+		// Task 04 - Unusual Database Program - https://protohackers.com/problem/4
 		//
 		// Add the following to the fly.toml
 		// [env]
@@ -86,6 +87,15 @@ func main() {
 
 		err := udpserver.Listen(ctx, listen, func(ctx context.Context, conn net.PacketConn, addr net.Addr, buf []byte) {
 			db.Handle(ctx, conn, addr, buf)
+		})
+		if err != nil {
+			log.Println("Error: [Listen]:", err.Error())
+		}
+
+	case 5:
+		// Task 05 - Mob in the Middle - https://protohackers.com/problem/5
+		err := tcpserver.Listen(ctx, port, func(ctx context.Context, conn net.Conn) {
+			proxy.New(conn).Handle(ctx, conn)
 		})
 		if err != nil {
 			log.Println("Error: [Listen]:", err.Error())

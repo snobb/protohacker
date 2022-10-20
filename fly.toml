@@ -5,24 +5,25 @@ kill_signal = "SIGINT"
 kill_timeout = 5
 
 [env]
-  ADDRESS = "fly-global-services:5000"
-
-# [[services]]
-#   internal_port = 8080
-#   protocol = "tcp"
-#   [services.concurrency]
-#     hard_limit = 25
-#     soft_limit = 20
-#
-#   [[services.ports]]
-#     port = "10001"
-#
-#   [[services.tcp_checks]]
-#     interval = "15s"
-#     timeout = "2s"
+  # ADDRESS = "fly-global-services:5000"
+  ADDRESS = "chat.protohackers.com:16963"
 
 [[services]]
-  internal_port = 5000
-  protocol = "udp"
+  internal_port = 8080
+  protocol = "tcp"
+  [services.concurrency]
+    hard_limit = 25
+    soft_limit = 20
+
   [[services.ports]]
-    port = 5000
+    port = "10001"
+
+  [[services.tcp_checks]]
+    interval = "15s"
+    timeout = "2s"
+
+# [[services]]
+#   internal_port = 5000
+#   protocol = "udp"
+#   [[services.ports]]
+#     port = 5000
