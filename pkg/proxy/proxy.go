@@ -1,15 +1,13 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
 	"proto/pkg/iotools"
-	"strings"
-	"unicode"
 )
 
 // Proxy is a BogusCoin proxy
@@ -18,10 +16,8 @@ type Proxy struct {
 	backend string
 }
 
-const (
-	// EvilAddr where to send stolen monies ;)
-	EvilAddr = "7YWHMfk9JZe0LM0g1ZauHuiSxhI"
-)
+// EvilAddr where to send stolen monies ;)
+var EvilAddr = []byte("7YWHMfk9JZe0LM0g1ZauHuiSxhI")
 
 // New creates a new Proxy instance.
 func New(rw io.ReadWriter) *Proxy {
@@ -64,27 +60,25 @@ func handleLines(ctx context.Context, from, to io.ReadWriter) {
 			continue
 		}
 
-		lineStr := string(line)
-
 		idx, sz := 0, 0
 		for {
-			idx, sz = findAddress(lineStr, idx+sz)
+			idx, sz = findAddress(line, idx+sz)
 			if idx == -1 {
 				break
 			}
 
-			addr := lineStr[idx : idx+sz]
+			addr := line[idx : idx+sz]
 
-			if addr != EvilAddr {
+			if !bytes.Equal(addr, EvilAddr) {
 				log.Printf("rewriting %s with %s", addr, EvilAddr)
-				lineStr = strings.ReplaceAll(lineStr, addr, EvilAddr)
+				line = bytes.ReplaceAll(line, addr, EvilAddr)
 
 				// adjust index since we updated the string
 				idx -= len(addr) - len(EvilAddr)
 			}
 		}
 
-		if _, err := fmt.Fprintln(to, lineStr); err != nil {
+		if _, err := to.Write(append(line, '\n')); err != nil {
 			log.Println("Error handleLines:", err.Error())
 		}
 	}
@@ -92,7 +86,7 @@ func handleLines(ctx context.Context, from, to io.ReadWriter) {
 
 // returns index and length or -1 as index if not found
 // laborous version - perhaps should try my luck with regexp.
-func findAddress(line string, i int) (int, int) {
+func findAddress(line []byte, i int) (int, int) {
 	start := -1
 
 	for ; i < len(line); i++ {
@@ -114,7 +108,7 @@ func findAddress(line string, i int) (int, int) {
 
 		// if we're here - we have been within a token AND found a non-legit char - handle buffer
 		sz := i - start
-		if unicode.IsSpace(rune(ch)) && 26 <= sz && sz <= 35 {
+		if ch == ' ' && 26 <= sz && sz <= 35 {
 			return start, sz
 		}
 
