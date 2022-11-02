@@ -15,12 +15,13 @@ import (
 	"proto/pkg/price"
 	"proto/pkg/prime"
 	"proto/pkg/proxy"
+	"proto/pkg/speed"
 	"proto/pkg/tcpserver"
 	"proto/pkg/udpserver"
 )
 
 const (
-	problem = 5
+	problem = 6
 	port    = 8080
 	udpPort = 5000
 )
@@ -96,6 +97,16 @@ func main() {
 		// Task 05 - Mob in the Middle - https://protohackers.com/problem/5
 		err := tcpserver.Listen(ctx, port, func(ctx context.Context, conn net.Conn) {
 			proxy.New(conn).Handle(ctx, conn)
+		})
+		if err != nil {
+			log.Println("Error: [Listen]:", err.Error())
+		}
+
+	case 6:
+		// Task 06 - Speed Daemon - https://protohackers.com/problem/6
+		sd := speed.New()
+		err := tcpserver.Listen(ctx, port, func(ctx context.Context, conn net.Conn) {
+			sd.Handle(ctx, conn)
 		})
 		if err != nil {
 			log.Println("Error: [Listen]:", err.Error())
