@@ -104,9 +104,12 @@ func main() {
 
 	case 6:
 		// Task 06 - Speed Daemon - https://protohackers.com/problem/6
-		sd := speed.New()
+		sd := speed.New(ctx)
 		err := tcpserver.Listen(ctx, port, func(ctx context.Context, conn net.Conn) {
-			sd.Handle(ctx, conn)
+			ctx, cancel := context.WithCancel(ctx)
+			defer cancel()
+
+			sd.Handle(ctx, conn, conn.RemoteAddr())
 		})
 		if err != nil {
 			log.Println("Error: [Listen]:", err.Error())

@@ -2,6 +2,7 @@ package speed
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"testing"
 
@@ -10,7 +11,10 @@ import (
 
 func TestSpeed_logic(t *testing.T) {
 	is := is.New(t)
-	s := New()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := New(ctx)
 
 	plate1 := &Plate{Plate: "FOO", Timestamp: 716847}
 	plate2 := &Plate{Plate: "FOO", Timestamp: 717147}
@@ -31,9 +35,10 @@ func TestSpeed_logic(t *testing.T) {
 		},
 	}
 
-	buf := &bytes.Buffer{}
-	s.dispatchers[42] = buf
 	s.limits[42] = 100
+	var buf bytes.Buffer
+	go s.subscribeForRoad(ctx, &buf, 42)
+	go s.subscribeForRoad(ctx, &buf, 42)
 
 	s.registerPlate(plate1, camState1)
 	s.registerPlate(plate2, camState2)
@@ -45,13 +50,6 @@ func TestSpeed_logic(t *testing.T) {
 	fmt.Printf("plates records: %v\n", s.plates["FOO"][42])
 
 	s.issueTickets(plate1, camState1)
-	fmt.Printf("tickets: %v\n", s.issuedTickets[42][0])
-
-	is.Equal(s.issuedTickets[42][0].Info.Speed, uint16(12000))
-
-	s.dispatchTicket(camState1.camera.Road)
-
-	fmt.Printf("%#v\n", buf.String())
 
 	plate3 := &Plate{Plate: "FOO", Timestamp: 717247}
 	camState3 := &clientState{
@@ -67,7 +65,9 @@ func TestSpeed_logic(t *testing.T) {
 
 func TestSpeed_Wierd_Readings(t *testing.T) {
 	is := is.New(t)
-	s := New()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := New(ctx)
 
 	plate1 := &Plate{Plate: "FOO", Timestamp: 82724824}
 	plate2 := &Plate{Plate: "FOO", Timestamp: 82765354}
@@ -88,8 +88,6 @@ func TestSpeed_Wierd_Readings(t *testing.T) {
 		},
 	}
 
-	buf := &bytes.Buffer{}
-	s.dispatchers[42] = buf
 	s.limits[42] = 60
 
 	s.registerPlate(plate1, camState1)
@@ -102,8 +100,4 @@ func TestSpeed_Wierd_Readings(t *testing.T) {
 	fmt.Printf("plates records: %v\n", s.plates["FOO"][42])
 
 	s.issueTickets(plate1, camState1)
-	// fmt.Printf("tickets: %v\n", s.issuedTickets[42][0])
-	// is.Equal(s.issuedTickets[42][0].Info.Speed, uint16(5924))
-
-	s.dispatchTicket(camState1.camera.Road)
 }

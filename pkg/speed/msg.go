@@ -75,13 +75,16 @@ func (d *Dispatcher) ReadFrom(r io.Reader) (int64, error) {
 }
 
 // ================================================================================
+type PlateReading struct {
+	Mile      uint16
+	Timestamp uint32
+}
+
 type TicketInfo struct {
-	Road       uint16
-	Mile1      uint16
-	TimeStamp1 uint32
-	Mile2      uint16
-	TimeStamp2 uint32
-	Speed      uint16
+	Road     uint16
+	Reading1 PlateReading
+	Reading2 PlateReading
+	Speed    uint16
 }
 
 type Ticket struct {
@@ -101,8 +104,8 @@ func (t *Ticket) WriteTo(w io.Writer) (int64, error) {
 		return -1, err
 	}
 
-	// type + string, length + info (uint16 * 4) + (uint32 * 2)
-	return 1 + int64(len(t.Plate)) + 1 + 16, nil
+	// type + strlen + string + info ((uint16 * 4) + (uint32 * 2))
+	return 1 + 1 + int64(len(t.Plate)) + 16, nil
 }
 
 // === Generic functions ==========================================================

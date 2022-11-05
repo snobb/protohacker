@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"math"
+	"net"
 	"sort"
 	"sync"
 	"time"
@@ -23,44 +24,48 @@ const (
 	typeIAMDispatcher uint8 = 0x81
 )
 
-type Reading struct {
-	Mile      uint16
-	Timestamp uint32
-}
-
-type Readings []Reading
+type Readings []PlateReading
 
 // Speed is a speed camera managing solution
 type Speed struct {
 	mu         sync.Mutex
 	limits     map[uint16]uint16              // speed limits per road
 	plates     map[string]map[uint16]Readings // plate,road -> mile, time record.
-	ticketedOn map[string]map[uint32]struct{}
+	ticketDays map[string]map[uint32]struct{}
 
-	dispatchers   map[uint16]io.ReadWriter
-	issuedTickets map[uint16][]*Ticket // tickets per road
+	issuedTicketsCh map[uint16]chan *Ticket // tickets per road
+	trackTicketsCh  chan *Ticket            // tickets to create
 }
 
 type clientState struct {
+	addr       net.Addr
 	haInterval time.Duration
 	camera     *Camera
 	dispatcher *Dispatcher
 }
 
 // New creates a new Speed instance
-func New() *Speed {
-	return &Speed{
-		limits:        make(map[uint16]uint16),
-		plates:        make(map[string]map[uint16]Readings),
-		ticketedOn:    make(map[string]map[uint32]struct{}),
-		dispatchers:   make(map[uint16]io.ReadWriter),
-		issuedTickets: make(map[uint16][]*Ticket),
+func New(ctx context.Context) *Speed {
+	speed := &Speed{
+		limits:          make(map[uint16]uint16),
+		plates:          make(map[string]map[uint16]Readings),
+		ticketDays:      make(map[string]map[uint32]struct{}),
+		issuedTicketsCh: make(map[uint16]chan *Ticket),
+		trackTicketsCh:  make(chan *Ticket),
 	}
+
+	go func(ctx context.Context) {
+		for ticket := range speed.trackTicketsCh {
+			speed.trackTicket(ticket)
+		}
+	}(ctx)
+
+	return speed
 }
 
 // Handle handles the tcp connection
-func (s *Speed) Handle(ctx context.Context, rw io.ReadWriter) {
-	state := &clientState{}
+func (s *Speed) Handle(ctx context.Context, rw io.ReadWriter, addr net.Addr) {
+	state := &clientState{addr: addr}
 
 	for {
 		var kind [1]byte
@@ -98,7 +103,7 @@ func (s *Speed) Handle(ctx context.Context, rw io.ReadWriter) {
 
 // ==== Message handlers ==========================================================
 func (s *Speed) handlePlate(ctx context.Context, rw io.ReadWriter, state *clientState) error {
-	log.Println("handling plate message")
+	log.Printf("handling plate message from %s", state.addr.String())
 	if state.camera == nil {
 		return errors.New("The client has not identified itself as camera yet")
 	}
@@ -110,7 +115,6 @@ func (s *Speed) handlePlate(ctx context.Context, rw io.ReadWriter, state *client
 
 	s.registerPlate(plate, state)
 	s.issueTickets(plate, state)
-	s.dispatchTicket(state.camera.Road)
 
 	return nil
 }
@@ -120,7 +124,7 @@ func (s *Speed) handleHeartbeat(ctx context.Context, rw io.ReadWriter, state *cl
 		return errors.New("heartbeat has already been activated for the client.")
 	}
 
-	log.Println("handling wantHeartBeat message")
+	log.Printf("handling wantHeartBeat message from %s", state.addr.String())
 	var interval uint32
 	if err := binary.Read(rw, binary.BigEndian, &interval); err != nil {
 		return fmt.Errorf("Failed to parse WantHeartBeat message")
@@ -156,7 +160,7 @@ func (s *Speed) handleHeartbeat(ctx context.Context, rw io.ReadWriter, state *cl
 }
 
 func (s *Speed) handleCamera(ctx context.Context, rw io.ReadWriter, state *clientState) error {
-	log.Println("handling IAMCamera message")
+	log.Printf("handling IAMCamera message from %s", state.addr.String())
 	if state.camera != nil {
 		return errors.New("The camera has already been identified")
 	}
@@ -175,7 +179,7 @@ func (s *Speed) handleCamera(ctx context.Context, rw io.ReadWriter, state *clien
 }
 
 func (s *Speed) handleDispatcher(ctx context.Context, rw io.ReadWriter, state *clientState) error {
-	log.Println("handling IAMDispatcher message")
+	log.Printf("handling IAMDispatcher message from %s", state.addr.String())
 
 	if state.camera != nil {
 		return errors.New("The client has already been identified as camera")
@@ -185,34 +189,43 @@ func (s *Speed) handleDispatcher(ctx context.Context, rw io.ReadWriter, state *c
 		return errors.New("The client has already been identified as a dispatcher")
 	}
 
-	dispatcher := &Dispatcher{}
-	if _, err := dispatcher.ReadFrom(rw); err != nil {
+	state.dispatcher = &Dispatcher{}
+	if _, err := state.dispatcher.ReadFrom(rw); err != nil {
 		return fmt.Errorf("Failed to parse IAMDispatcher message")
 	}
 
-	log.Printf("New dispatcher: %v", dispatcher)
+	log.Printf("New dispatcher: %v", state.dispatcher)
 
-	for _, road := range dispatcher.Roads {
-		// if _, ok := s.dispatchers[road]; !ok {
-		// 	// Add dispatchers - even though there can be many dispatchers responsible for the
-		// 	// same road, given a ticket cannot be issued more then once - meaning we can only
-		// 	// keep the most recent dispatcher socket per road.
-		// 	s.dispatchers[road] = rw
-		// }
-		s.dispatchers[road] = rw
-		s.dispatchTicket(road)
+	for _, road := range state.dispatcher.Roads {
+		go s.subscribeForRoad(ctx, rw, road)
 	}
 
 	return nil
 }
 
 // ================================================================================
+func (s *Speed) subscribeForRoad(ctx context.Context, w io.Writer, road uint16) {
+	var ticket *Ticket
+
+	ch := s.issuedTicketsChannel(road)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+
+		case ticket = <-ch:
+			log.Printf("Dispatching ticket %v for road: %d", ticket, road)
+
+			if _, err := ticket.WriteTo(w); err != nil {
+				log.Printf("error could not send ticket: %s", err.Error())
+			}
+		}
+	}
+}
+
 func (s *Speed) registerPlate(plate *Plate, state *clientState) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	log.Printf("registerPlate start: %s %v", plate.Plate, state)
-	defer log.Printf("registerPlate stop: %s %v", plate.Plate, state)
 
 	roads, ok := s.plates[plate.Plate]
 	if !ok {
@@ -222,10 +235,10 @@ func (s *Speed) registerPlate(plate *Plate, state *clientState) {
 
 	records, ok := roads[state.camera.Road]
 	if !ok {
-		records = make([]Reading, 0)
+		records = make([]PlateReading, 0)
 	}
 
-	roads[state.camera.Road] = append(records, Reading{
+	roads[state.camera.Road] = append(records, PlateReading{
 		Mile:      state.camera.Mile,
 		Timestamp: plate.Timestamp,
 	})
@@ -237,9 +250,6 @@ func (s *Speed) registerPlate(plate *Plate, state *clientState) {
 func (s *Speed) issueTickets(plate *Plate, state *clientState) {
 	s.mu.Lock()
 
-	log.Printf("issueTickets start: %s", plate.Plate)
-	defer log.Printf("issueTickets stop: %s", plate.Plate)
-
 	roads, ok := s.plates[plate.Plate]
 	if !ok {
 		roads = make(map[uint16]Readings)
@@ -248,7 +258,7 @@ func (s *Speed) issueTickets(plate *Plate, state *clientState) {
 
 	records, ok := roads[state.camera.Road]
 	if !ok {
-		records = make([]Reading, 0)
+		records = make([]PlateReading, 0)
 	} else {
 		// sort records
 		sort.Slice(records, func(i, j int) bool {
@@ -264,12 +274,11 @@ func (s *Speed) issueTickets(plate *Plate, state *clientState) {
 	}
 
 	for i := 1; i < len(records); i++ {
-		r1 := records[i-1]
-		r2 := records[i]
+		r1, r2 := records[i-1], records[i]
 		log.Printf("r1: %v, r2: %v", r1, r2)
 
 		distance := math.Abs(float64(r2.Mile) - float64(r1.Mile))
-		delta := float64(r2.Timestamp - r1.Timestamp)
+		delta := float64(r2.Timestamp) - float64(r1.Timestamp)
 
 		if delta == 0 {
 			continue
@@ -284,26 +293,32 @@ func (s *Speed) issueTickets(plate *Plate, state *clientState) {
 		// by the spec.
 		if speed > float64(limit)+0.3 {
 			log.Printf("speeding detected: %s - speed: %d", plate.Plate, uint16(speed))
-			s.createTicket(r1, r2, uint16(speed*100), plate.Plate, state)
+			s.trackTicket(&Ticket{
+				Plate: plate.Plate,
+				Info: TicketInfo{
+					Reading1: r1,
+					Reading2: r2,
+					Road:     state.camera.Road,
+					Speed:    uint16(speed * 100),
+				},
+			})
 		}
 	}
 }
 
-func (s *Speed) createTicket(r1, r2 Reading, speed uint16, plate string, state *clientState) {
-	ticketDates, ok := s.ticketedOn[plate]
+func (s *Speed) trackTicket(ticket *Ticket) {
+	ticketDates, ok := s.ticketDays[ticket.Plate]
 	if !ok {
 		ticketDates = make(map[uint32]struct{})
-		s.mu.Lock()
-		s.ticketedOn[plate] = ticketDates
-		s.mu.Unlock()
+		s.ticketDays[ticket.Plate] = ticketDates
 	}
 
-	day1 := r1.Timestamp / 86400
-	day2 := r2.Timestamp / 86400
+	day1 := ticket.Info.Reading1.Timestamp / 86400
+	day2 := ticket.Info.Reading2.Timestamp / 86400
 
 	for i := day1; i <= day2; i++ {
 		if _, ok := ticketDates[i]; ok {
-			log.Printf("%s has already been ticketed on the %d day", plate, i)
+			log.Printf("%s has already been ticketed on the %d day", ticket.Plate, i)
 			return // already ticketed
 		}
 	}
@@ -313,59 +328,21 @@ func (s *Speed) createTicket(r1, r2 Reading, speed uint16, plate string, state *
 		ticketDates[i] = struct{}{}
 	}
 
-	log.Printf("createTicket start: %s -> %d: %v %v", plate, speed, r1, r2)
-	defer log.Printf("createTicket start: %s -> %d: %v %v", plate, speed, r1, r2)
-
-	ticket := &Ticket{
-		Plate: plate,
-		Info: TicketInfo{
-			Road:       state.camera.Road,
-			Mile1:      r1.Mile,
-			TimeStamp1: r1.Timestamp,
-			Mile2:      r2.Mile,
-			TimeStamp2: r2.Timestamp,
-			Speed:      speed,
-		},
-	}
-
-	log.Printf("dispatching ticket: %v", ticket)
-	s.mu.Lock()
-	// append tickets to the pending tickets
-	tickets, ok := s.issuedTickets[state.camera.Road]
-	if !ok {
-		tickets = make([]*Ticket, 0)
-	}
-	s.mu.Unlock()
-
 	log.Printf("add pending ticket: %v", ticket)
-	s.issuedTickets[state.camera.Road] = append(tickets, ticket)
+	ch := s.issuedTicketsChannel(ticket.Info.Road)
+	ch <- ticket
 }
 
-func (s *Speed) dispatchTicket(road uint16) {
-	log.Printf("dispatchTicket start: %d", road)
-	defer log.Printf("dispatchTicket stop: %d", road)
-
-	ww, ok := s.dispatchers[road]
-	if !ok {
-		log.Println("no dispatchers found so far")
-		return // no dispatchers
-	}
-
-	tickets, ok := s.issuedTickets[road]
-	if !ok {
-		log.Println("no tickets found so far")
-		return // no tickets
-	}
-
-	for _, ticket := range tickets {
-		log.Printf("sending ticket %v to dispatcher", ticket)
-
-		if _, err := ticket.WriteTo(ww); err != nil {
-			log.Printf("error could not send ticket: %s", err.Error())
-		}
-	}
-
+func (s *Speed) issuedTicketsChannel(road uint16) chan *Ticket {
 	s.mu.Lock()
-	s.issuedTickets[road] = tickets[:0]
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+
+	// append tickets to the pending tickets
+	ch, ok := s.issuedTicketsCh[road]
+	if !ok {
+		ch = make(chan *Ticket, 1000)
+		s.issuedTicketsCh[road] = ch
+	}
+
+	return ch
 }
