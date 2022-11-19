@@ -3,8 +3,8 @@ package database
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
-	"net"
 	"strings"
 )
 
@@ -25,7 +25,7 @@ func New() *DB {
 }
 
 // Handle handles an UDP message
-func (d *DB) Handle(ctx context.Context, pc net.PacketConn, addr net.Addr, buf []byte) {
+func (d *DB) Handle(ctx context.Context, w io.Writer, buf []byte) {
 	key, value, insert := parseMessage(string(buf))
 	if insert {
 		d.store[key] = value
@@ -34,22 +34,22 @@ func (d *DB) Handle(ctx context.Context, pc net.PacketConn, addr net.Addr, buf [
 
 	// retrieve
 	if key == "version" {
-		send(fmt.Sprintf("version=%s", version), pc, addr)
+		send(fmt.Sprintf("version=%s", version), w)
 		return
 	}
 
 	value = d.store[key]
-	send(fmt.Sprintf("%s=%s", key, value), pc, addr)
+	send(fmt.Sprintf("%s=%s", key, value), w)
 }
 
-func send(msg string, pc net.PacketConn, addr net.Addr) {
+func send(msg string, w io.Writer) {
 	if len(msg) > 1000 {
 		return
 	}
 
 	log.Println("sending:", msg)
 
-	if _, err := pc.WriteTo([]byte(msg), addr); err != nil {
+	if _, err := w.Write([]byte(msg)); err != nil {
 		log.Println("Error sending a response:", err.Error())
 	}
 }
