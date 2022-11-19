@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"proto/pkg/chat/broker"
 	"proto/pkg/database"
 	"proto/pkg/echo"
+	"proto/pkg/lrcp"
 	"proto/pkg/price"
 	"proto/pkg/prime"
 	"proto/pkg/proxy"
@@ -21,7 +23,7 @@ import (
 )
 
 const (
-	problem = 6
+	problem = 7
 	port    = 8080
 	udpPort = 5000
 )
@@ -86,8 +88,8 @@ func main() {
 			listen = fmt.Sprintf(":%d", udpPort)
 		}
 
-		err := udpserver.Listen(ctx, listen, func(ctx context.Context, conn net.PacketConn, addr net.Addr, buf []byte) {
-			db.Handle(ctx, conn, addr, buf)
+		err := udpserver.Listen(ctx, listen, func(ctx context.Context, w io.Writer, buf []byte) {
+			db.Handle(ctx, w, buf)
 		})
 		if err != nil {
 			log.Println("Error: [Listen]:", err.Error())
@@ -114,5 +116,22 @@ func main() {
 		if err != nil {
 			log.Println("Error: [Listen]:", err.Error())
 		}
+
+	case 7:
+		// Task 07 - Line reversal - https://protohackers.com/problem/7
+		lrcp := lrcp.New()
+
+		listen := os.Getenv("ADDRESS")
+		if listen == "" {
+			listen = fmt.Sprintf(":%d", udpPort)
+		}
+
+		err := udpserver.Listen(ctx, listen, func(ctx context.Context, w io.Writer, buf []byte) {
+			lrcp.Handle(ctx, w, buf)
+		})
+		if err != nil {
+			log.Println("Error: [Listen]:", err.Error())
+		}
+
 	}
 }

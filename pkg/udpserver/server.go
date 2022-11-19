@@ -3,12 +3,22 @@ package udpserver
 import (
 	"context"
 	"errors"
+	"io"
 	"log"
 	"net"
 )
 
+type PacketConn struct {
+	pconn net.PacketConn
+	addr  net.Addr
+}
+
+func (u *PacketConn) Write(buf []byte) (n int, err error) {
+	return u.pconn.WriteTo(buf, u.addr)
+}
+
 // HandlerFunc is a tcp listener callback.
-type HandlerFunc func(ctx context.Context, conn net.PacketConn, addr net.Addr, buf []byte)
+type HandlerFunc func(ctx context.Context, w io.Writer, buf []byte)
 
 // Listen listens for an UDP connection
 func Listen(ctx context.Context, addr string, handler HandlerFunc) error {
@@ -49,8 +59,13 @@ loop:
 
 		log.Printf("Accepted connection from %s - payload: %v", addr.String(), string(buf[:n]))
 
+		conn := &PacketConn{
+			pconn: pc,
+			addr:  addr,
+		}
+
 		go func() {
-			handler(ctx, pc, addr, buf[:n])
+			handler(ctx, conn, buf[:n])
 		}()
 	}
 
