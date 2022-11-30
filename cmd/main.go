@@ -119,7 +119,7 @@ func main() {
 
 	case 7:
 		// Task 07 - Line reversal - https://protohackers.com/problem/7
-		lrcp := lrcp.New()
+		lrcp := lrcp.New(ctx)
 
 		listen := os.Getenv("ADDRESS")
 		if listen == "" {
@@ -132,6 +132,5 @@ func main() {
 		if err != nil {
 			log.Println("Error: [Listen]:", err.Error())
 		}
-
 	}
 }

@@ -21,7 +21,7 @@ run:
 	go run --ldflags '${LDFLAGS}' $(MAIN)
 
 dev-run:
-	go run --ldflags '${LDFLAGS}' $(MAIN) | poleno
+	go run -race --ldflags '${LDFLAGS}' $(MAIN)
 
 cover:
 	go tool cover -html=$(COVEROUT)

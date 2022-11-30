@@ -3,51 +3,120 @@ package lrcp
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"strconv"
+	"sync"
+	"time"
+
+	"proto/pkg/lrcp/session"
 )
 
+// LRCP constants
 const (
-	MinSessionID = 0
-	MaxSessionID = 2147483648
-	MinLength    = 0
-	MaxLength    = 1000
-
 	TypeConnect = "connect"
 	TypeAck     = "ack"
 	TypeData    = "data"
 	TypeClose   = "close"
 )
 
-type Session struct {
-	data []byte
-}
-
+// LRCP is a lrcp protocol handler.
 type LRCP struct {
-	sessions map[uint32]Session
+	mu       sync.Mutex
+	sessions map[int]*session.Session
 }
 
-func New() *LRCP {
-	return &LRCP{
-		sessions: make(map[uint32]Session),
+// New creates a new LRCP instance.
+func New(ctx context.Context) *LRCP {
+	lrcp := &LRCP{
+		sessions: make(map[int]*session.Session),
 	}
+
+	// Check expired sessions.
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				log.Printf("cancelled...")
+				return
+
+			case <-ticker.C:
+				for _, session := range lrcp.sessions {
+					lrcp.SweepExpired(ctx, session)
+				}
+			}
+		}
+	}()
+
+	return lrcp
 }
 
-func (l *LRCP) Handle(ctx context.Context, w io.Writer, buf []byte) {
+func normalise(buf []byte) ([][]byte, error) {
+	if len(buf) < 2 || len(buf) > 1000 {
+		return nil, errors.New("invalid size")
+	}
+
 	if buf[0] != '/' || buf[len(buf)-1] != '/' {
-		log.Printf("invalid message: %s", string(buf))
+		return nil, fmt.Errorf("invalid message: %s", string(buf))
+	}
+
+	tokens := bytes.SplitN(buf[1:len(buf)-1], []byte{'/'}, 3)
+	if len(tokens) < 2 {
+		return nil, fmt.Errorf("invalid split: %#v", tokens)
+	}
+
+	if len(tokens) == 2 {
+		return tokens, nil
+	}
+
+	tokens1 := bytes.SplitN(tokens[2], []byte{'/'}, 2)
+	if len(tokens1) == 1 {
+		return append(tokens[:2], tokens1[0]), nil
+	}
+
+	escaped := bytes.Count(tokens1[1], []byte("\\/"))
+	wild := bytes.Count(tokens1[1], []byte("/"))
+
+	if escaped != wild {
+		return nil, fmt.Errorf("invalid message: %s", string(buf))
+	}
+
+	return append(tokens[:2], tokens1...), nil
+}
+
+// Handle handles a single incoming udp datagram.
+func (l *LRCP) Handle(ctx context.Context, w io.Writer, buf []byte) {
+	tokens, err := normalise(buf)
+	if err != nil {
+		log.Printf("Validation error: %s", err.Error())
 		return
 	}
 
-	tokens := bytes.Split(buf[1:len(buf)-1], []byte{'/'})
+	fmt.Printf("%v", tokens)
 
 	mtype := string(tokens[0])
-	sid, err := parseSessionID(tokens[1])
+	sid, err := session.ParseID(tokens[1])
 	if err != nil {
 		log.Printf("invalid session ID: %s", string(tokens[1]))
 		return
+	}
+
+	sess, ok := l.sessions[sid]
+	if !ok {
+		sess = session.New(ctx, w, sid)
+
+		if mtype == TypeConnect {
+			l.AddSession(sid, sess)
+		} else {
+			sess.Close()
+			sess.SendClose(ctx)
+			return
+		}
 	}
 
 	switch mtype {
@@ -57,7 +126,7 @@ func (l *LRCP) Handle(ctx context.Context, w io.Writer, buf []byte) {
 			return
 		}
 
-		if err := l.handleConnect(ctx, sid); err != nil {
+		if err := sess.HandleConnect(ctx); err != nil {
 			log.Printf("CONNECT: could not handle message: %s", err.Error())
 			return
 		}
@@ -68,10 +137,12 @@ func (l *LRCP) Handle(ctx context.Context, w io.Writer, buf []byte) {
 			return
 		}
 
-		if err := l.handleClose(ctx, sid); err != nil {
+		if err := sess.HandleClose(ctx); err != nil {
 			log.Printf("CLOSE: could not handle message: %s", err.Error())
 			return
 		}
+
+		delete(l.sessions, sess.ID)
 
 	case TypeAck:
 		if len(tokens) != 3 {
@@ -79,13 +150,18 @@ func (l *LRCP) Handle(ctx context.Context, w io.Writer, buf []byte) {
 			return
 		}
 
-		length, err := parseInt(tokens[2])
+		length, err := strconv.Atoi(string(tokens[2]))
 		if err != nil {
 			log.Printf("ACK: could not parse length: %s", err.Error())
 			return
 		}
 
-		if err := l.handleAck(ctx, sid, length); err != nil {
+		if length < 0 {
+			log.Printf("ACK: invalid length: %d", length)
+			return
+		}
+
+		if err := sess.HandleAck(ctx, length); err != nil {
 			log.Printf("ACK: could not handle message: %s", err.Error())
 			return
 		}
@@ -96,13 +172,18 @@ func (l *LRCP) Handle(ctx context.Context, w io.Writer, buf []byte) {
 			return
 		}
 
-		pos, err := parseInt(tokens[2])
+		pos, err := strconv.Atoi(string(tokens[2]))
 		if err != nil {
 			log.Printf("DATA: could not parse pos: %s", err.Error())
 			return
 		}
 
-		if err := l.handleData(ctx, sid, pos, tokens[3]); err != nil {
+		if pos < 0 {
+			log.Printf("DATA: invalid pos: %d", pos)
+			return
+		}
+
+		if err := sess.HandleData(ctx, pos, tokens[3]); err != nil {
 			log.Printf("DATA: could not handle message: %s", err.Error())
 			return
 		}
@@ -113,46 +194,24 @@ func (l *LRCP) Handle(ctx context.Context, w io.Writer, buf []byte) {
 	}
 }
 
-func (l *LRCP) handleConnect(ctx context.Context, sid int) error {
-	log.Printf("CONNECT: sid:%d", sid)
-	return nil
+// AddSession adds session to the storage safely.
+func (l *LRCP) AddSession(sid int, session *session.Session) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	l.sessions[sid] = session
 }
 
-func (l *LRCP) handleClose(ctx context.Context, sid int) error {
-	log.Printf("CLOSE: sid:%d", sid)
-
-	return nil
-}
-
-func (l *LRCP) handleAck(ctx context.Context, sid int, length int) error {
-	log.Printf("ACK: sid:%d length:%d", sid, length)
-	return nil
-}
-
-func (l *LRCP) handleData(ctx context.Context, sid int, length int, data []byte) error {
-	log.Printf("DATA: sid:%d length:%d data:%s", sid, length, string(data))
-	return nil
-}
-
-// ================================================================================
-func parseSessionID(buf []byte) (int, error) {
-	sid, err := parseInt(buf)
-	if err != nil {
-		return -1, err
+// SweepExpired checks and clears if it's expired.
+func (l *LRCP) SweepExpired(ctx context.Context, session *session.Session) {
+	if session.Closed() {
+		l.mu.Lock()
+		delete(l.sessions, session.ID)
+		l.mu.Unlock()
 	}
 
-	if int64(sid) < MinSessionID || int64(sid) > MaxSessionID {
-		return -1, fmt.Errorf("the value is out of range: %s", string(buf))
+	if session.Expired() {
+		log.Printf("Session expired: %d", session.ID)
+		session.Close()
 	}
-
-	return sid, nil
-}
-
-func parseInt(buf []byte) (int, error) {
-	val, err := strconv.Atoi(string(buf))
-	if err != nil {
-		return -1, fmt.Errorf("cannot parse session id: %s", err.Error())
-	}
-
-	return val, nil
 }
