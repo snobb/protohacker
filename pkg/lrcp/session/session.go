@@ -14,7 +14,7 @@ import (
 const (
 	retransmitInterval = 3 * time.Second
 	sessionTimeout     = 60 * time.Second
-	pollInterval       = 50 * time.Millisecond
+	chunkSize          = 300
 )
 
 // Payload stores a storable payload.
@@ -31,14 +31,14 @@ type Session struct {
 	closed bool
 
 	// RECEIVE
-	rcvBytes int       // consequtive data we acked so far
+	rcvAcked int       // consequtive data we acked so far
 	rcvLast  time.Time // time of the last received ack
 
 	// SEND
-	sendAck    int // sent data acked
-	sendRtxCh  chan *Payload
-	sendBytes  bytes.Buffer
-	sendRtxPos int // pos of retransmitted chunk
+	sendBuffer    bytes.Buffer
+	sendAcked     int // sent data acked
+	sendTotal     int // total bytes sent so far
+	sendRtxCancel func()
 
 	// application layer
 	app *app.App
@@ -46,42 +46,12 @@ type Session struct {
 
 // New creates a new Session instance
 func New(ctx context.Context, w io.Writer, id int) *Session {
-	s := &Session{
-		w:         w,
-		ID:        id,
-		rcvLast:   time.Now(),
-		sendRtxCh: make(chan *Payload, 10),
-
-		app: app.New(ctx),
+	return &Session{
+		w:       w,
+		ID:      id,
+		rcvLast: time.Now(),
+		app:     &app.App{},
 	}
-
-	ctx, cancel := context.WithCancel(ctx)
-
-	// send data back from a single location
-	go func() {
-		// defer log.Printf("closing data sender go routine for %d", id)
-		defer close(s.sendRtxCh)
-		defer cancel()
-
-		plCh := s.Payloads(ctx, s.sendRtxCh)
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-
-			case pl, ok := <-plCh:
-				if !ok {
-					return
-				}
-
-				// send the payload and make sure it's acked in full (retransmit if necessary)
-				s.sendRetransmit(ctx, pl)
-			}
-		}
-	}()
-
-	return s
 }
 
 // HandleConnect handles 'connect' message
@@ -105,17 +75,16 @@ func (s *Session) HandleAck(ctx context.Context, length int) error {
 	log.Printf("ACK: sid:%d length:%d", s.ID, length)
 	s.notify()
 
-	if length < s.sendAck {
+	if length < s.sendAcked {
 		return nil
 
-	} else if length > s.sendBytes.Len() {
-		s.Close()
+	} else if length > s.sendTotal {
 		s.SendClose(ctx)
 
 	} else {
 		// if not all data received - send the remainder
 		// or if done
-		s.sendAck = length
+		s.sendAcked = length
 	}
 
 	return nil
@@ -128,26 +97,25 @@ func (s *Session) HandleData(ctx context.Context, pos int, data []byte) error {
 
 	buf := Unescape(data)
 
-	if pos > s.rcvBytes {
+	if pos > s.rcvAcked {
 		// do not have all the data - send duplicate ack for data we have.
-		s.SendAck(ctx, s.rcvBytes)
-		s.SendAck(ctx, s.rcvBytes)
+		s.SendAck(ctx, s.rcvAcked)
+		s.SendAck(ctx, s.rcvAcked)
 
-	} else if pos < s.rcvBytes {
-		s.SendAck(ctx, s.rcvBytes)
+	} else if pos < s.rcvAcked {
+		s.SendAck(ctx, s.rcvAcked)
 		// resent chunk
-		if pos != s.sendRtxPos && pos < s.sendBytes.Len() {
-			s.sendRtxCh <- &Payload{
-				Pos:  pos,
-				Data: s.sendBytes.Bytes()[pos:],
-			}
+		if pos < s.sendBuffer.Len() && s.sendRtxCancel == nil {
+			ctx, s.sendRtxCancel = context.WithCancel(ctx)
+			go s.retransmit(ctx)
 		}
 
 	} else {
 		// have all data up to pos + the current buffer
-		s.rcvBytes += len(data)
-		s.SendAck(ctx, s.rcvBytes)
+		s.rcvAcked += int(len(data))
+		s.SendAck(ctx, s.rcvAcked)
 		_, _ = s.app.Write(buf) // pass data to the application layer.
+		s.sendAppData(ctx)
 	}
 
 	return nil
@@ -169,58 +137,12 @@ func (s *Session) SendClose(ctx context.Context) {
 	}
 }
 
-// Payloads listens to the application layer responses and sends the output into a designated
-// channel + the possition of that payload.
-func (s *Session) Payloads(ctx context.Context, in <-chan *Payload) <-chan *Payload {
-	ch := make(chan *Payload, 1000)
-
-	go func() {
-		// defer log.Printf("closing Payloads go routine for %d", s.ID)
-		defer close(ch)
-
-		var pos int
-		for {
-			select {
-			case <-ctx.Done():
-				return
-
-			case line, ok := <-s.app.OutCh():
-				if !ok {
-					log.Printf("[%d] close from app channel", s.ID)
-					return
-				}
-
-				s.sendBytes.Write(line) // keeping all sent bytes in a single buf chunk.
-				ch <- &Payload{
-					Pos:  pos,
-					Data: line,
-				}
-				pos += len(line) // advance pos
-
-			case payload, ok := <-in:
-				if !ok {
-					log.Printf("[%d] close from out of band channel", s.ID)
-					return
-				}
-
-				ch <- payload
-			}
-		}
-	}()
-
-	return ch
-}
-
 // Close closes the session
 func (s *Session) Close() {
 	s.closed = true
 
 	// set last ack time to the past to sweep the connection.
 	s.rcvLast = time.Now().Add(-1 * time.Hour)
-
-	if err := s.app.Close(); err != nil {
-		log.Printf("Could not close the app: %s", err.Error())
-	}
 }
 
 // Expired returns true if session is expired
@@ -241,37 +163,71 @@ func (s *Session) notify() {
 	s.rcvLast = time.Now()
 }
 
-func (s *Session) sendRetransmit(ctx context.Context, pl *Payload) {
-	// defer log.Printf("closing retransmit go routine for %d", s.ID)
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-
-	log.Printf("/data/%d/%d/%s/", s.ID, pl.Pos, string(Escape(pl.Data)))
-	fmt.Fprintf(s.w, "/data/%d/%d/%s/", s.ID, pl.Pos, string(Escape(pl.Data)))
-	s.sendRtxPos = pl.Pos
-	sendTime := time.Now()
+func (s *Session) sendAppData(ctx context.Context) {
+	buf := make([]byte, chunkSize)
 
 	for {
-		select {
-		case <-ctx.Done():
-			return
+		n, err := s.app.Read(buf)
+		if n == 0 {
+			break
+		}
 
-		case <-ticker.C:
-			if s.sendAck >= pl.Pos+len(pl.Data) {
-				s.sendRtxPos = -1
-				return
-			}
+		if err != nil {
+			log.Printf("[%d] Cannot read from the app layer: %s", s.ID, err.Error())
+		}
 
-			if time.Since(sendTime) >= retransmitInterval {
-				if pl.Pos < s.sendAck {
-					pl.Pos = s.sendAck
-					pl.Data = s.sendBytes.Bytes()[s.sendAck:]
+		log.Printf("/data/%d/%d/%s/", s.ID, s.sendTotal, string(Escape(buf[:n])))
+		fmt.Fprintf(s.w, "/data/%d/%d/%s/", s.ID, s.sendTotal, string(Escape(buf[:n])))
+
+		s.sendTotal += int(n)
+		s.sendBuffer.Write(buf[:n])
+	}
+
+	if s.sendRtxCancel == nil {
+		ctx, s.sendRtxCancel = context.WithCancel(ctx)
+		go s.retransmit(ctx)
+	}
+}
+
+func (s *Session) retransmit(ctx context.Context) {
+	if s.sendRtxCancel != nil {
+		return // retransmit is already in progress
+	}
+
+	ticker := time.NewTicker(retransmitInterval)
+	defer ticker.Stop()
+	defer func() {
+		s.sendRtxCancel = nil
+	}()
+
+	select {
+	case <-ctx.Done():
+		return
+
+	case <-ticker.C:
+		if s.sendAcked < s.sendTotal {
+			data := bytes.NewReader(s.sendBuffer.Bytes()[s.sendAcked:])
+			buf := make([]byte, chunkSize)
+			pos := s.sendAcked
+
+			for {
+				n, err := data.Read(buf)
+				if n == 0 {
+					break
 				}
 
-				// log.Printf("retransmitting /data/%d/%d/%s/", s.ID, pl.Pos, string(Escape(pl.Data)))
-				fmt.Fprintf(s.w, "/data/%d/%d/%s/", s.ID, pl.Pos, string(Escape(pl.Data)))
-				sendTime = time.Now()
+				if err != nil {
+					log.Printf("[%d] Cannot read from the send buffer: %s", s.ID, err.Error())
+				}
+
+				log.Printf("retransmit /data/%d/%d/%s/", s.ID, pos, string(Escape(buf[:n])))
+				fmt.Fprintf(s.w, "/data/%d/%d/%s/", s.ID, pos, string(Escape(buf[:n])))
+
+				pos += n
 			}
+
+		} else {
+			return
 		}
 	}
 }

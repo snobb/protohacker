@@ -3,98 +3,45 @@ package app
 import (
 	"bufio"
 	"bytes"
-	"context"
-	"errors"
-	"log"
 )
 
 // App is the application layer of the line processor.
 type App struct {
-	in     chan []byte
-	out    chan []byte
-	closed bool
+	in  bytes.Buffer
+	out bytes.Buffer
 }
 
-// New creates a new instance of App
-// It splits the buffer contests by new line and returns a slice of the split lines, when each is
-// reversed. The function assumes there is a trailing CR for every given line.
-func New(ctx context.Context) *App {
-	app := &App{
-		in:  make(chan []byte, 100),
-		out: make(chan []byte, 100),
-	}
-
-	go func() {
-		defer app.Close()
-		defer close(app.out)
-		defer log.Print("Closing out channel")
-
-		var buf bytes.Buffer
-		br := bufio.NewReadWriter(bufio.NewReader(&buf), bufio.NewWriter(&buf))
-
-		for chunk := range app.in {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
-			buf.Write(chunk)
-
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
-
-				line, err := br.ReadBytes('\n')
-				if err != nil {
-					// return the remainder back to the buf
-					buf.Write(line)
-					break
-				}
-
-				sz := len(line) - 2
-				for i, j := 0, sz; i < (len(line)-1)/2; i, j = i+1, j-1 {
-					line[i], line[j] = line[j], line[i]
-				}
-
-				app.out <- line
-			}
-		}
-	}()
-
-	return app
+// Read is the io.Reader implemetnation for App
+func (a *App) Read(p []byte) (n int, err error) {
+	return a.out.Read(p)
 }
 
 // Write is the io.Writer implemetnation for App
 func (a *App) Write(p []byte) (n int, err error) {
-	if a.closed {
-		return -1, errors.New("writing to a close app")
-	}
-
-	a.in <- p
-	return len(p), nil
+	n, err = a.in.Write(p)
+	a.process()
+	return
 }
 
-// Close implements io.Closer interface and closes the output channel.
-func (a *App) Close() error {
-	if a.in != nil {
-		close(a.in)
-		a.in = nil
-		a.closed = true
+// process splits the contents of the "in" buffer by the new line and reverses
+// the contents (keeping newlines in place). Incomplete line is returned back to "in" buffer and
+// will be reassessed on the next Write.
+func (a *App) process() {
+	br := bufio.NewReader(&a.in)
+
+	for {
+		line, err := br.ReadBytes('\n')
+		if err != nil {
+			// incomplete line - return the remainder back to the in buffer
+			a.in.Write(line)
+			break
+		}
+
+		sz := len(line) - 2
+		for i, j := 0, sz; i < (len(line)-1)/2; i, j = i+1, j-1 {
+			line[i], line[j] = line[j], line[i]
+		}
+
+		a.out.Write(line)
 	}
-
-	// if a.out != nil {
-	// 	close(a.out)
-	// 	a.out = nil
-	// }
-
-	return nil
-}
-
-// OutCh return the output channel
-func (a *App) OutCh() <-chan []byte {
-	return a.out
 }
