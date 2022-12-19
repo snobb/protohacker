@@ -3,6 +3,8 @@ package lrcp
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"strconv"
@@ -56,12 +58,11 @@ func New(ctx context.Context) *LRCP {
 
 // Handle handles a single incoming udp datagram.
 func (l *LRCP) Handle(ctx context.Context, w io.Writer, buf []byte) {
-	if buf[0] != '/' || buf[len(buf)-1] != '/' {
-		log.Printf("invalid message: %s", string(buf))
+	tokens, err := normalise(buf)
+	if err != nil {
+		log.Printf("Validation error: %s", err.Error())
 		return
 	}
-
-	tokens := bytes.Split(buf[1:len(buf)-1], []byte{'/'})
 
 	mtype := string(tokens[0])
 	sid, err := session.ParseID(tokens[1])
@@ -131,11 +132,6 @@ func (l *LRCP) Handle(ctx context.Context, w io.Writer, buf []byte) {
 		}
 
 	case TypeData:
-		if len(tokens) > 4 {
-			tokens[3] = bytes.Join(tokens[3:], []byte("/"))
-			tokens = tokens[:4]
-		}
-
 		if len(tokens) != 4 {
 			log.Printf("DATA: invalid message: %s, %d tokens expected", string(buf), 4)
 			return
@@ -183,4 +179,37 @@ func (l *LRCP) SweepExpired(ctx context.Context, session *session.Session) {
 		log.Printf("Session expired: %d", session.ID)
 		session.Close()
 	}
+}
+
+func normalise(buf []byte) ([][]byte, error) {
+	if len(buf) < 2 || len(buf) > 1000 {
+		return nil, errors.New("invalid size")
+	}
+
+	if buf[0] != '/' || buf[len(buf)-1] != '/' {
+		return nil, fmt.Errorf("invalid message: %s", string(buf))
+	}
+
+	tokens := bytes.SplitN(buf[1:len(buf)-1], []byte{'/'}, 3)
+	if len(tokens) < 2 {
+		return nil, fmt.Errorf("invalid split: %#v", tokens)
+	}
+
+	if len(tokens) == 2 {
+		return tokens, nil
+	}
+
+	tokens1 := bytes.SplitN(tokens[2], []byte{'/'}, 2)
+	if len(tokens1) == 1 {
+		return append(tokens[:2], tokens1[0]), nil
+	}
+
+	escaped := bytes.Count(tokens1[1], []byte("\\/"))
+	wild := bytes.Count(tokens1[1], []byte("/"))
+
+	if escaped != wild {
+		return nil, fmt.Errorf("invalid message: %s", string(buf))
+	}
+
+	return append(tokens[:2], tokens1...), nil
 }

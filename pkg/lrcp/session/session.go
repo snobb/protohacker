@@ -14,31 +14,30 @@ import (
 const (
 	retransmitInterval = 3 * time.Second
 	sessionTimeout     = 60 * time.Second
-	pollInterval       = 50 * time.Millisecond
+	chunkSize          = 400
 )
 
 // Payload stores a storable payload.
 type Payload struct {
-	Pos    int
-	Data   []byte
-	SentAt time.Time
+	Pos  int
+	Data []byte
 }
 
 // Session is a session managing unit
 type Session struct {
-	ID     int
-	w      io.Writer
-	closed bool
+	ID      int
+	w       io.Writer
+	closed  bool
+	closeFn func()
 
 	// RECEIVE
-	rcvBytes int       // consequtive data we acked so far
+	rcvAcked int       // consequtive data we acked so far
 	rcvLast  time.Time // time of the last received ack
 
 	// SEND
-	sendAck    int // sent data acked
-	sendRtxCh  chan *Payload
-	sendBytes  bytes.Buffer
-	sendRtxPos int // pos of retransmitted chunk
+	sendBytes bytes.Buffer
+	sendAcked int // sent data acked
+	sendCh    chan Payload
 
 	// application layer
 	app *app.App
@@ -46,38 +45,36 @@ type Session struct {
 
 // New creates a new Session instance
 func New(ctx context.Context, w io.Writer, id int) *Session {
-	s := &Session{
-		w:         w,
-		ID:        id,
-		rcvLast:   time.Now(),
-		sendRtxCh: make(chan *Payload, 10),
-
-		app: app.New(ctx),
-	}
-
 	ctx, cancel := context.WithCancel(ctx)
 
-	// send data back from a single location
+	s := &Session{
+		w:       w,
+		ID:      id,
+		rcvLast: time.Now(),
+		sendCh:  make(chan Payload, 1000),
+		app:     &app.App{},
+	}
+
+	s.closeFn = func() {
+		cancel()
+		close(s.sendCh)
+
+		// set last ack time to the past to sweep the connection.
+		s.rcvLast = time.Now().Add(-1 * time.Hour)
+		s.closed = true
+	}
+
 	go func() {
-		// defer log.Printf("closing data sender go routine for %d", id)
-		defer close(s.sendRtxCh)
-		defer cancel()
-
-		plCh := s.Payloads(ctx, s.sendRtxCh)
-
-		for {
+		for payload := range s.sendCh {
 			select {
 			case <-ctx.Done():
 				return
 
-			case pl, ok := <-plCh:
-				if !ok {
-					return
-				}
-
-				// send the payload and make sure it's acked in full (retransmit if necessary)
-				s.sendRetransmit(ctx, pl)
+			default:
 			}
+
+			s.sendData(ctx, payload.Pos, payload.Data)
+			s.retransmit(ctx)
 		}
 	}()
 
@@ -88,7 +85,6 @@ func New(ctx context.Context, w io.Writer, id int) *Session {
 func (s *Session) HandleConnect(ctx context.Context) error {
 	log.Printf("CONNECT: sid:%d", s.ID)
 	s.SendAck(ctx, 0)
-
 	return nil
 }
 
@@ -96,7 +92,6 @@ func (s *Session) HandleConnect(ctx context.Context) error {
 func (s *Session) HandleClose(ctx context.Context) error {
 	s.Close()
 	s.SendClose(ctx)
-
 	return nil
 }
 
@@ -105,17 +100,15 @@ func (s *Session) HandleAck(ctx context.Context, length int) error {
 	log.Printf("ACK: sid:%d length:%d", s.ID, length)
 	s.notify()
 
-	if length < s.sendAck {
+	if length < s.sendAcked {
 		return nil
 
 	} else if length > s.sendBytes.Len() {
-		s.Close()
 		s.SendClose(ctx)
 
 	} else {
-		// if not all data received - send the remainder
-		// or if done
-		s.sendAck = length
+		// if not all data received - send the remainder or if done
+		s.sendAcked = length
 	}
 
 	return nil
@@ -126,18 +119,17 @@ func (s *Session) HandleData(ctx context.Context, pos int, data []byte) error {
 	log.Printf("DATA: sid:%d pos:%d data:%s", s.ID, pos, string(data))
 	s.notify()
 
-	buf := Unescape(data)
-
-	if pos > s.rcvBytes {
+	if pos > s.rcvAcked {
 		// do not have all the data - send duplicate ack for data we have.
-		s.SendAck(ctx, s.rcvBytes)
-		s.SendAck(ctx, s.rcvBytes)
+		s.SendAck(ctx, s.rcvAcked)
+		s.SendAck(ctx, s.rcvAcked)
 
-	} else if pos < s.rcvBytes {
-		s.SendAck(ctx, s.rcvBytes)
-		// resent chunk
-		if pos != s.sendRtxPos && pos < s.sendBytes.Len() {
-			s.sendRtxCh <- &Payload{
+	} else if pos < s.rcvAcked {
+		s.SendAck(ctx, s.rcvAcked)
+
+		if pos < s.sendBytes.Len() && !s.closed {
+			// resend chunk
+			s.sendCh <- Payload{
 				Pos:  pos,
 				Data: s.sendBytes.Bytes()[pos:],
 			}
@@ -145,9 +137,10 @@ func (s *Session) HandleData(ctx context.Context, pos int, data []byte) error {
 
 	} else {
 		// have all data up to pos + the current buffer
-		s.rcvBytes += len(data)
-		s.SendAck(ctx, s.rcvBytes)
-		_, _ = s.app.Write(buf) // pass data to the application layer.
+		buf := Unescape(data)
+		s.rcvAcked += int(len(buf))
+		s.SendAck(ctx, s.rcvAcked)
+		s.processAppData(ctx, buf)
 	}
 
 	return nil
@@ -169,57 +162,10 @@ func (s *Session) SendClose(ctx context.Context) {
 	}
 }
 
-// Payloads listens to the application layer responses and sends the output into a designated
-// channel + the possition of that payload.
-func (s *Session) Payloads(ctx context.Context, in <-chan *Payload) <-chan *Payload {
-	ch := make(chan *Payload, 1000)
-
-	go func() {
-		// defer log.Printf("closing Payloads go routine for %d", s.ID)
-		defer close(ch)
-
-		var pos int
-		for {
-			select {
-			case <-ctx.Done():
-				return
-
-			case line, ok := <-s.app.OutCh():
-				if !ok {
-					log.Printf("[%d] close from app channel", s.ID)
-					return
-				}
-
-				s.sendBytes.Write(line) // keeping all sent bytes in a single buf chunk.
-				ch <- &Payload{
-					Pos:  pos,
-					Data: line,
-				}
-				pos += len(line) // advance pos
-
-			case payload, ok := <-in:
-				if !ok {
-					log.Printf("[%d] close from out of band channel", s.ID)
-					return
-				}
-
-				ch <- payload
-			}
-		}
-	}()
-
-	return ch
-}
-
 // Close closes the session
 func (s *Session) Close() {
-	s.closed = true
-
-	// set last ack time to the past to sweep the connection.
-	s.rcvLast = time.Now().Add(-1 * time.Hour)
-
-	if err := s.app.Close(); err != nil {
-		log.Printf("Could not close the app: %s", err.Error())
+	if !s.closed {
+		s.closeFn()
 	}
 }
 
@@ -241,37 +187,67 @@ func (s *Session) notify() {
 	s.rcvLast = time.Now()
 }
 
-func (s *Session) sendRetransmit(ctx context.Context, pl *Payload) {
-	// defer log.Printf("closing retransmit go routine for %d", s.ID)
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
+func (s *Session) processAppData(ctx context.Context, buf []byte) {
+	if s.closed {
+		return
+	}
 
-	log.Printf("/data/%d/%d/%s/", s.ID, pl.Pos, string(Escape(pl.Data)))
-	fmt.Fprintf(s.w, "/data/%d/%d/%s/", s.ID, pl.Pos, string(Escape(pl.Data)))
-	s.sendRtxPos = pl.Pos
-	sendTime := time.Now()
+	_, _ = s.app.Write(buf) // pass data to the application layer.
+	buf, err := io.ReadAll(s.app)
+	if err != nil {
+		log.Printf("[%d] Cannot read from the app layer: %s", s.ID, err.Error())
+		return
+	}
+
+	s.sendCh <- Payload{
+		Pos:  s.sendBytes.Len(),
+		Data: buf,
+	}
+	s.sendBytes.Write(buf)
+}
+
+func (s *Session) sendData(ctx context.Context, pos int, data []byte) {
+	rdata := bytes.NewReader(data)
+	buf := make([]byte, chunkSize)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-
-		case <-ticker.C:
-			if s.sendAck >= pl.Pos+len(pl.Data) {
-				s.sendRtxPos = -1
-				return
-			}
-
-			if time.Since(sendTime) >= retransmitInterval {
-				if pl.Pos < s.sendAck {
-					pl.Pos = s.sendAck
-					pl.Data = s.sendBytes.Bytes()[s.sendAck:]
-				}
-
-				// log.Printf("retransmitting /data/%d/%d/%s/", s.ID, pl.Pos, string(Escape(pl.Data)))
-				fmt.Fprintf(s.w, "/data/%d/%d/%s/", s.ID, pl.Pos, string(Escape(pl.Data)))
-				sendTime = time.Now()
-			}
+		default:
 		}
+
+		n, err := rdata.Read(buf)
+		if n == 0 {
+			break
+		}
+
+		if err != nil {
+			log.Printf("[%d] Cannot read from the send buffer: %s", s.ID, err.Error())
+		}
+
+		fmt.Fprintf(s.w, "/data/%d/%d/%s/", s.ID, pos, string(Escape(buf[:n])))
+
+		pos += n
+	}
+}
+
+func (s *Session) retransmit(ctx context.Context) {
+	timer := time.NewTimer(retransmitInterval)
+	defer func() {
+		timer.Stop()
+	}()
+
+	select {
+	case <-ctx.Done():
+		return
+
+	case <-timer.C:
+		if s.sendAcked >= s.sendBytes.Len() || s.closed {
+			return
+		}
+
+		s.sendData(ctx, s.sendAcked, s.sendBytes.Bytes()[s.sendAcked:])
+		timer.Reset(retransmitInterval)
 	}
 }

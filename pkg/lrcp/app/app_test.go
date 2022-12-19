@@ -1,7 +1,6 @@
 package app_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/matryer/is"
@@ -13,7 +12,7 @@ func TestReverser_Reverse(t *testing.T) {
 	tests := []struct {
 		name    string
 		data    []string
-		want    []string
+		want    string
 		remains string // needs to be reversed and with trailing new line
 	}{
 		{
@@ -22,7 +21,7 @@ func TestReverser_Reverse(t *testing.T) {
 				"hello ",
 				"world\n",
 			},
-			want: []string{"dlrow olleh\n"},
+			want: "dlrow olleh\n",
 		},
 		{
 			name: "Should parse and reverse a multiple line in multiple buffers",
@@ -32,7 +31,7 @@ func TestReverser_Reverse(t *testing.T) {
 				"foo ",
 				"bar",
 			},
-			want:    []string{"dlrow olleh\n"},
+			want:    "dlrow olleh\n",
 			remains: "rab oof\n",
 		},
 		{
@@ -44,7 +43,7 @@ func TestReverser_Reverse(t *testing.T) {
 				"foo ",
 				"bar",
 			},
-			want:    []string{"dlrow olleh\n", "zabzab\n"},
+			want:    "dlrow olleh\nzabzab\n",
 			remains: "rab oof\n",
 		},
 
@@ -57,7 +56,7 @@ func TestReverser_Reverse(t *testing.T) {
 				"foo",
 				"bar\n",
 			},
-			want: []string{"dlrow olleh\n", "raboof\n"},
+			want: "dlrow olleh\nraboof\n",
 		},
 	}
 
@@ -65,33 +64,16 @@ func TestReverser_Reverse(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			is := is.New(t)
 
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
-			app := app.New(ctx)
+			app := app.App{}
 
 			for _, data := range tt.data {
 				app.Write([]byte(data))
 			}
 
-			i := 0
-			for line := range app.OutCh() {
-				is.Equal(string(line), tt.want[i])
-				i++
+			buf := make([]byte, 100)
+			n, _ := app.Read(buf)
 
-				if i >= len(tt.want) {
-					break
-				}
-			}
-
-			is.Equal(i, len(tt.want))
-
-			if tt.remains != "" {
-				app.Write([]byte("\n"))
-				line := <-app.OutCh()
-
-				is.Equal(string(line), tt.remains)
-			}
+			is.Equal(string(buf[:n]), tt.want)
 		})
 	}
 }
