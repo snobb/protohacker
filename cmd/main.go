@@ -13,6 +13,7 @@ import (
 	"proto/pkg/chat/broker"
 	"proto/pkg/database"
 	"proto/pkg/echo"
+	"proto/pkg/insecsock"
 	"proto/pkg/lrcp"
 	"proto/pkg/price"
 	"proto/pkg/prime"
@@ -23,7 +24,7 @@ import (
 )
 
 const (
-	problem = 7
+	problem = 8
 	port    = 8080
 	udpPort = 5000
 )
@@ -128,6 +129,25 @@ func main() {
 
 		err := udpserver.Listen(ctx, listen, func(ctx context.Context, w io.Writer, buf []byte) {
 			lrcp.Handle(ctx, w, buf)
+		})
+		if err != nil {
+			log.Println("Error: [Listen]:", err.Error())
+		}
+
+	case 8:
+		// Task 08 - Insecure Sockets Layer - https://protohackers.com/problem/8
+
+		err := tcpserver.Listen(ctx, port, func(ctx context.Context, conn net.Conn) {
+			ctx, cancel := context.WithCancel(ctx)
+			defer cancel()
+
+			sockLayer, err := insecsock.NewLayer(ctx, conn)
+			if err != nil {
+				log.Printf("failed to create a secure layer: %s", err.Error())
+				return
+			}
+
+			sockLayer.Handle(ctx)
 		})
 		if err != nil {
 			log.Println("Error: [Listen]:", err.Error())
