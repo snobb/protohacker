@@ -1,18 +1,18 @@
-# fly.toml file generated for protohacker-go on 2022-10-19T11:57:01+01:00
+# fly.toml file generated for protohacker-go on 2022-12-29T21:54:48Z
 
 app = "protohacker-go"
 kill_signal = "SIGINT"
 kill_timeout = 5
 
 [env]
-  # ADDRESS = "fly-global-services:5000"
+  # DEBUG=1
 
 [[services]]
   internal_port = 8080
   protocol = "tcp"
   [services.concurrency]
-    hard_limit = 150
-    soft_limit = 70
+    hard_limit = 1100
+    soft_limit = 800
 
   [[services.ports]]
     port = "10001"
@@ -20,9 +20,3 @@ kill_timeout = 5
   [[services.tcp_checks]]
     interval = "15s"
     timeout = "2s"
-
-# [[services]]
-#   internal_port = 5000
-#   protocol = "udp"
-#   [[services.ports]]
-#     port = 5000

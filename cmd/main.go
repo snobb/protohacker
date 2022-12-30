@@ -14,6 +14,7 @@ import (
 	"proto/pkg/database"
 	"proto/pkg/echo"
 	"proto/pkg/insecsock"
+	"proto/pkg/jobqueue"
 	"proto/pkg/lrcp"
 	"proto/pkg/price"
 	"proto/pkg/prime"
@@ -24,7 +25,7 @@ import (
 )
 
 const (
-	problem = 8
+	problem = 9
 	port    = 8080
 	udpPort = 5000
 )
@@ -148,6 +149,20 @@ func main() {
 			}
 
 			sockLayer.Handle(ctx)
+		})
+		if err != nil {
+			log.Println("Error: [Listen]:", err.Error())
+		}
+
+	case 9:
+		// Task 09 - Job Centre - https://protohackers.com/problem/9
+		jobQueue := jobqueue.New(ctx)
+		err := tcpserver.Listen(ctx, port, func(ctx context.Context, conn net.Conn) {
+			ctx, cancel := context.WithCancel(ctx)
+			defer cancel()
+
+			sess := jobqueue.NewSession(ctx, jobQueue, conn)
+			sess.Handle(ctx)
 		})
 		if err != nil {
 			log.Println("Error: [Listen]:", err.Error())
