@@ -9,7 +9,7 @@ COVEROUT := cover.out
 BRANCH   := ${shell git rev-parse --abbrev-ref HEAD}
 REVCNT   := ${shell git rev-list --count $(BRANCH)}
 REVHASH  := ${shell git log -1 --format="%h"}
-LDFLAGS  := -X main.version=${BRANCH}.${REVCNT}.${REVHASH}
+LDFLAGS  := -s -X main.version=${BRANCH}.${REVCNT}.${REVHASH}
 CFLAGS   := --ldflags '${LDFLAGS}' -o $(BIN)/$(TARGET)
 
 all: lint test build
