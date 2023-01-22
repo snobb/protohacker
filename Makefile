@@ -37,7 +37,7 @@ build-linux: clean
 	CGO_ENABLED=0 GOOS=linux go build ${CFLAGS} -a -installsuffix cgo $(MAIN)
 
 build-rpi:
-	GOOS=linux GOARCH=arm GOARM=5 go build ${CFLAGS} -o $(BIN)/$(TARGET) $(MAIN)
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=5 go build ${CFLAGS} $(MAIN)
 
 clean:
 	-rm -rf $(BIN)

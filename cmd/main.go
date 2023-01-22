@@ -11,6 +11,7 @@ import (
 
 	"proto/pkg/chat"
 	"proto/pkg/chat/broker"
+	"proto/pkg/codestore"
 	"proto/pkg/database"
 	"proto/pkg/echo"
 	"proto/pkg/insecsock"
@@ -25,7 +26,7 @@ import (
 )
 
 const (
-	problem = 9
+	problem = 10
 	port    = 8080
 	udpPort = 5000
 )
@@ -161,6 +162,18 @@ func main() {
 			defer cancel()
 
 			jobcentre.NewSession(ctx, conn).Handle(ctx)
+		})
+		if err != nil {
+			log.Println("Error: [Listen]:", err.Error())
+		}
+
+	case 10:
+		// 10. Voracious Code Storage - https://protohackers.com/problem/10
+		err := tcpserver.Listen(ctx, port, func(ctx context.Context, conn net.Conn) {
+			ctx, cancel := context.WithCancel(ctx)
+			defer cancel()
+
+			codestore.New(conn, conn.RemoteAddr()).Handle(ctx)
 		})
 		if err != nil {
 			log.Println("Error: [Listen]:", err.Error())
