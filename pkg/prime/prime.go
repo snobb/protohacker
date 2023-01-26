@@ -13,22 +13,22 @@ import (
 
 const errorMethod = "error"
 
-type Request struct {
+type request struct {
 	Method string   `json:"method"`
 	Number *float64 `json:"number"`
 }
 
-type Response struct {
+type response struct {
 	Method string `json:"method"`
 	Prime  bool   `json:"prime"`
 }
 
-func getResponse(req Request) Response {
+func getResponse(req request) response {
 	if !validate(req) {
-		return Response{Method: errorMethod}
+		return response{Method: errorMethod}
 	}
 
-	resp := Response{Method: "isPrime"}
+	resp := response{Method: "isPrime"}
 	num := *req.Number
 
 	// check if the number is integer
@@ -56,7 +56,7 @@ func Handle(ctx context.Context, conn net.Conn) {
 
 		log.Println("handling input:", string(line))
 
-		var req Request
+		var req request
 		if err := json.Unmarshal(line, &req); err != nil {
 			log.Printf("Invalid request - %s\n", err.Error())
 			req.Method = errorMethod
@@ -66,7 +66,7 @@ func Handle(ctx context.Context, conn net.Conn) {
 
 		if err := enc.Encode(resp); err != nil {
 			err = fmt.Errorf("failed to encode response - %w: %v", err, resp)
-			_ = enc.Encode(Response{Method: errorMethod})
+			_ = enc.Encode(response{Method: errorMethod})
 			log.Printf("Error encoding: %s", err.Error())
 			return
 		}
@@ -78,7 +78,7 @@ func Handle(ctx context.Context, conn net.Conn) {
 // validate the request
 // A request is malformed if it is not a well-formed JSON object, if any required field is
 // missing, if the method name is not "isPrime", or if the number value is not a number.
-func validate(req Request) bool {
+func validate(req request) bool {
 	return req.Method == "isPrime" && req.Number != nil
 }
 

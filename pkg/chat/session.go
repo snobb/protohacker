@@ -12,15 +12,18 @@ import (
 	"proto/pkg/iotools"
 )
 
+// Session is a session struct
 type Session struct {
 	name   string
 	broker *broker.Broker
 }
 
+// NewSession opens a new chat session entity.
 func NewSession(broker *broker.Broker) *Session {
 	return &Session{broker: broker}
 }
 
+// Handle handles a single chat connection.
 func (s *Session) Handle(ctx context.Context, rw io.ReadWriter) {
 	fmt.Fprintln(rw, "Welcome to budgetchat! What shall I call you?")
 

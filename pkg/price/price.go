@@ -9,16 +9,18 @@ import (
 	"proto/pkg/price/message"
 )
 
+// Handler handles price server
 type Handler struct {
 	payloads []message.Payload
 }
 
+// Handle handles a single connection
 func (m *Handler) Handle(ctx context.Context, rw io.ReadWriter) {
 	for {
 		select {
 		case <-ctx.Done():
 			log.Println("PriceHandle cancelled")
-			break
+			return
 
 		default:
 		}

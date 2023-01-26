@@ -24,13 +24,13 @@ const (
 	typeIAMDispatcher uint8 = 0x81
 )
 
-type Readings []PlateReading
+type readings []PlateReading
 
 // Speed is a speed camera managing solution
 type Speed struct {
 	mu         sync.Mutex
 	limits     map[uint16]uint16              // speed limits per road
-	plates     map[string]map[uint16]Readings // plate,road -> mile, time record.
+	plates     map[string]map[uint16]readings // plate,road -> mile, time record.
 	ticketDays map[string]map[uint32]struct{}
 
 	issuedTicketsCh map[uint16]chan *Ticket // tickets per road
@@ -48,7 +48,7 @@ type clientState struct {
 func New(ctx context.Context) *Speed {
 	speed := &Speed{
 		limits:          make(map[uint16]uint16),
-		plates:          make(map[string]map[uint16]Readings),
+		plates:          make(map[string]map[uint16]readings),
 		ticketDays:      make(map[string]map[uint32]struct{}),
 		issuedTicketsCh: make(map[uint16]chan *Ticket),
 		trackTicketsCh:  make(chan *Ticket),
@@ -102,6 +102,7 @@ func (s *Speed) Handle(ctx context.Context, rw io.ReadWriter, addr net.Addr) {
 }
 
 // ==== Message handlers ==========================================================
+
 func (s *Speed) handlePlate(ctx context.Context, rw io.ReadWriter, state *clientState) error {
 	log.Printf("handling plate message from %s", state.addr.String())
 	if state.camera == nil {
@@ -204,6 +205,7 @@ func (s *Speed) handleDispatcher(ctx context.Context, rw io.ReadWriter, state *c
 }
 
 // ================================================================================
+
 func (s *Speed) subscribeForRoad(ctx context.Context, w io.Writer, road uint16) {
 	var ticket *Ticket
 
@@ -229,7 +231,7 @@ func (s *Speed) registerPlate(plate *Plate, state *clientState) {
 
 	roads, ok := s.plates[plate.Plate]
 	if !ok {
-		roads = make(map[uint16]Readings)
+		roads = make(map[uint16]readings)
 		s.plates[plate.Plate] = roads
 	}
 
@@ -252,7 +254,7 @@ func (s *Speed) issueTickets(plate *Plate, state *clientState) {
 
 	roads, ok := s.plates[plate.Plate]
 	if !ok {
-		roads = make(map[uint16]Readings)
+		roads = make(map[uint16]readings)
 		s.plates[plate.Plate] = roads
 	}
 

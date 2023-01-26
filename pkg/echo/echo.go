@@ -7,6 +7,7 @@ import (
 	"net"
 )
 
+// Handle handles an echo server connection.
 func Handle(ctx context.Context, conn net.Conn) {
 	buf := make([]byte, 2048)
 

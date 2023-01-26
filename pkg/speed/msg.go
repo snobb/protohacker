@@ -8,7 +8,7 @@ import (
 	"log"
 )
 
-// ================================================================================
+// Plate represetns a plate message payload.
 type Plate struct {
 	Plate     string
 	Timestamp uint32
@@ -30,7 +30,7 @@ func (p *Plate) ReadFrom(r io.Reader) (int64, error) {
 	return int64(len(p.Plate)) + 4, nil
 }
 
-// ================================================================================
+// Camera represents camera message payload
 type Camera struct {
 	Road  uint16
 	Mile  uint16
@@ -46,7 +46,7 @@ func (imc *Camera) ReadFrom(r io.Reader) (int64, error) {
 	return 6, nil
 }
 
-// ================================================================================
+// Dispatcher represents the Dispatcher message payload.
 type Dispatcher struct {
 	NumRoads uint8
 	Roads    []uint16
@@ -74,12 +74,13 @@ func (d *Dispatcher) ReadFrom(r io.Reader) (int64, error) {
 	return int64(d.NumRoads) * 2, nil
 }
 
-// ================================================================================
+// PlateReading is a Plate reading message payload
 type PlateReading struct {
 	Mile      uint16
 	Timestamp uint32
 }
 
+// TicketInfo represents the info of a ticket
 type TicketInfo struct {
 	Road     uint16
 	Reading1 PlateReading
@@ -87,6 +88,7 @@ type TicketInfo struct {
 	Speed    uint16
 }
 
+// Ticket represets a single ticket mapping Plate to TicketInfo.
 type Ticket struct {
 	Plate string
 	Info  TicketInfo
@@ -98,7 +100,7 @@ func (t *Ticket) WriteTo(w io.Writer) (int64, error) {
 		return -1, err
 	}
 
-	WriteString(w, t.Plate)
+	_ = WriteString(w, t.Plate)
 
 	if err := binary.Write(w, binary.BigEndian, &t.Info); err != nil {
 		return -1, err
@@ -121,6 +123,7 @@ func writeError(w io.Writer, err error) {
 	}
 }
 
+// ReadString reads a decoded string from io.Reader
 func ReadString(r io.Reader) (string, error) {
 	var sz [1]byte
 	_, err := r.Read(sz[:])
@@ -136,6 +139,7 @@ func ReadString(r io.Reader) (string, error) {
 	return string(buf), err
 }
 
+// WriteString writes an encoded string into io.Writer
 func WriteString(w io.Writer, str string) error {
 	if len(str) > 255 {
 		return fmt.Errorf("string is too long (%d): %s", len(str), str)
