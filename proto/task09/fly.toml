@@ -1,0 +1,20 @@
+app = "protohacker-go"
+kill_signal = "SIGINT"
+kill_timeout = 5
+
+[env]
+  DEBUG = 1
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+  [services.concurrency]
+    hard_limit = 1100
+    soft_limit = 800
+
+  [[services.ports]]
+    port = "10001"
+
+  [[services.tcp_checks]]
+    interval = "15s"
+    timeout = "2s"

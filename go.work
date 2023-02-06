@@ -1,0 +1,16 @@
+go 1.19
+
+use (
+	./proto/common
+	./proto/task00
+	./proto/task01
+	./proto/task02
+	./proto/task03
+	./proto/task04
+	./proto/task05
+	./proto/task06
+	./proto/task07
+	./proto/task08
+	./proto/task09
+	./proto/task10
+)

@@ -1,0 +1,13 @@
+app = "protohacker-go"
+kill_signal = "SIGINT"
+kill_timeout = 5
+
+[env]
+  ADDRESS = "fly-global-services:5000"
+
+[[services]]
+  internal_port = 5000
+  protocol = "udp"
+
+  [[services.ports]]
+    port = 5000

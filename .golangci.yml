@@ -62,6 +62,10 @@ linters-settings:
         arguments:
           - disableStutteringCheck
 
+      - name: package-comments
+        disabled: true
+
+
 issues:
   exclude:
     - ifElseChain
@@ -80,6 +84,7 @@ linters:
     - ineffassign
     - typecheck
     - govet
+    - gosec
     - gofmt
     - errorlint
     - nestif
