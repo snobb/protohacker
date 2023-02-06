@@ -1,14 +1,13 @@
 package prime
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"math"
 	"net"
-
-	"proto/pkg/iotools"
 )
 
 const errorMethod = "error"
@@ -28,24 +27,22 @@ func getResponse(req request) response {
 		return response{Method: errorMethod}
 	}
 
-	resp := response{Method: "isPrime"}
 	num := *req.Number
 
 	// check if the number is integer
 	if num != float64(int64(num)) {
-		resp.Prime = false
+		return response{Method: "isPrime", Prime: false}
 	}
 
-	resp.Prime = isPrime(int64(num))
-
-	return resp
+	return response{Method: "isPrime", Prime: isPrime(int64(num))}
 }
 
 // Handle handles a new tcp connection
 func Handle(ctx context.Context, conn net.Conn) {
 	enc := json.NewEncoder(conn)
+	scanner := bufio.NewScanner(conn)
 
-	for line := range iotools.GetLine(ctx, conn) {
+	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
 			log.Println("PrimeHandle: got canceled")
@@ -54,10 +51,10 @@ func Handle(ctx context.Context, conn net.Conn) {
 		default:
 		}
 
-		log.Println("handling input:", string(line))
+		log.Println("handling input:", scanner.Text())
 
 		var req request
-		if err := json.Unmarshal(line, &req); err != nil {
+		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
 			log.Printf("Invalid request - %s\n", err.Error())
 			req.Method = errorMethod
 		}
@@ -72,6 +69,11 @@ func Handle(ctx context.Context, conn net.Conn) {
 		}
 
 		log.Println("Sent response:", resp)
+	}
+
+	if err := scanner.Err(); err != nil {
+		_ = enc.Encode(response{Method: errorMethod})
+		log.Printf("Scanner: error: %s", err.Error())
 	}
 }
 
