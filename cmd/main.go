@@ -7,7 +7,6 @@ import (
 	"log"
 	"net"
 	"os"
-	"time"
 
 	"proto/pkg/chat"
 	"proto/pkg/chat/broker"
@@ -32,9 +31,6 @@ const (
 
 // Task00 - Smoke test - https://protohackers.com/problem/0
 func Task00(ctx context.Context) {
-	ctx, cancel := context.WithTimeout(ctx, 1*time.Minute)
-	defer cancel()
-
 	if err := tcpserver.Listen(ctx, tcpPort, echo.Handle); err != nil {
 		log.Println("Error: [Listen]:", err.Error())
 	}
@@ -42,9 +38,6 @@ func Task00(ctx context.Context) {
 
 // Task01 - Prime Time - https://protohackers.com/problem/1
 func Task01(ctx context.Context) {
-	ctx, cancel := context.WithTimeout(ctx, 1*time.Minute)
-	defer cancel()
-
 	if err := tcpserver.Listen(ctx, tcpPort, prime.Handle); err != nil {
 		log.Println("Error: [Listen]:", err.Error())
 	}
@@ -52,9 +45,6 @@ func Task01(ctx context.Context) {
 
 // Task02 - Means to an End - https://protohackers.com/problem/2
 func Task02(ctx context.Context) {
-	ctx, cancel := context.WithTimeout(ctx, 1*time.Minute)
-	defer cancel()
-
 	err := tcpserver.Listen(ctx, tcpPort, func(ctx context.Context, conn net.Conn) {
 		(&price.Handler{}).Handle(ctx, conn)
 	})
