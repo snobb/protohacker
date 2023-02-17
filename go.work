@@ -13,4 +13,5 @@ use (
 	./proto/task08
 	./proto/task09
 	./proto/task10
+	./proto/task11
 )
