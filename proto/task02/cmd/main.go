@@ -12,9 +12,6 @@ import (
 const tcpPort = 8080
 
 // Task02 - Means to an End - https://protohackers.com/problem/2
-func Task02(ctx context.Context) {
-}
-
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

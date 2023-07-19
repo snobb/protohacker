@@ -267,7 +267,7 @@ func (c *CodeStore) listFiles(dir string) {
 					string
 					int
 				}{
-					k[len(dir):],
+					value,
 					len(v),
 				})
 			}

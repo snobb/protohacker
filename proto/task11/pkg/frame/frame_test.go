@@ -18,7 +18,7 @@ func TestMsg_ReadFrom(t *testing.T) {
 		wantN    int64
 		wantErr  bool
 	}{
-		"Should read frame correctly": {
+		"Should read a frame correctly": {
 			payload: []byte{
 				0x50,                   // hello
 				0x00, 0x00, 0x00, 0x19, // len: 25
@@ -62,7 +62,7 @@ func TestMsg_WriteTo(t *testing.T) {
 		wantN       int64
 		wantErr     bool
 	}{
-		"Should read frame correctly": {
+		"Should write a frame correctly": {
 			msg: frame.New(frame.KindHello, []byte{
 				0x00, 0x00, 0x00, 0x0b, // proto len: 11
 				0x70, 0x65, 0x73, 0x74, // "pest

@@ -15,6 +15,11 @@ FLY_APP  := protohacker-go
 
 all: lint test build
 
+check-env:
+ifndef TASK
+	$(error TASK variable is undefined)
+endif
+
 lint:
 	ls ./proto | xargs -I@ golangci-lint run --modules-download-mode= ./proto/@/...
 
@@ -33,7 +38,7 @@ test:
 	CGO_ENABLED=0 go list -f '{{.Dir}}' proto/... | xargs \
 		go test -timeout ${TIMEOUT}s -cover -coverprofile=${COVEROUT}
 
-${WORKDIR}:
+${WORKDIR}: check-env
 	mkdir -p ${WORKDIR}/cmd && \
 		cd ${WORKDIR} && \
 		go mod init proto/${TASK} && \
@@ -52,7 +57,7 @@ build-linux: clean
 build-rpi:
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=5 go build ${CFLAGS} ${MAIN}
 
-launch:
+launch: check-env
 	@cp ${WORKDIR}/fly.toml . 2>/dev/null && \
 	sed "s/##TASK##/${TASK}/" Dockerfile.tmpl > Dockerfile && \
 	fly launch --copy-config --local-only --name ${FLY_APP} \
@@ -61,7 +66,7 @@ launch:
 	@rm -f ./fly.toml
 	@rm -f ./Dockerfile
 
-deploy:
+deploy: check-env
 	@cp ${WORKDIR}/fly.toml . 2>/dev/null && \
 	sed "s/##TASK##/${TASK}/" Dockerfile.tmpl > Dockerfile && \
 	fly deploy --local-only || echo 'error: export TASK variable'

@@ -8,17 +8,20 @@ import (
 	"net"
 )
 
+const bufsz = 16384
+
 type PacketConn struct {
 	pconn net.PacketConn
 	addr  net.Addr
 }
 
+// HandlerFunc is a tcp listener callback.
+type HandlerFunc func(ctx context.Context, w io.Writer, buf []byte)
+
+// Write writes buf buffer into the UDP socket and returns number of bytes written or an error
 func (u *PacketConn) Write(buf []byte) (n int, err error) {
 	return u.pconn.WriteTo(buf, u.addr)
 }
-
-// HandlerFunc is a tcp listener callback.
-type HandlerFunc func(ctx context.Context, w io.Writer, buf []byte)
 
 // Listen listens for an UDP connection
 func Listen(ctx context.Context, addr string, handler HandlerFunc) error {
@@ -33,15 +36,14 @@ func Listen(ctx context.Context, addr string, handler HandlerFunc) error {
 		_ = pc.Close()
 	}()
 
-loop:
 	for {
 		select {
 		case <-ctx.Done():
-			break loop
+			return nil
 		default:
 		}
 
-		buf := make([]byte, 2048)
+		buf := make([]byte, bufsz)
 		n, addr, err := pc.ReadFrom(buf)
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
@@ -52,11 +54,6 @@ loop:
 			continue
 		}
 
-		if n > 1000 {
-			log.Println("Message is too long:", err.Error())
-			continue
-		}
-
 		log.Printf("Accepted connection from %s - payload: %v", addr.String(), string(buf[:n]))
 
 		conn := &PacketConn{
@@ -64,10 +61,6 @@ loop:
 			addr:  addr,
 		}
 
-		go func() {
-			handler(ctx, conn, buf[:n])
-		}()
+		go handler(ctx, conn, buf[:n])
 	}
-
-	return nil
 }

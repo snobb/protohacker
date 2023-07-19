@@ -22,9 +22,9 @@ type Authority struct {
 	site      uint32
 	policies  map[string]uint32       // species -> policy
 	targets   map[string]frame.Target // species -> target
+	ch        chan *frame.SiteVisit
 	connected bool
 	dialed    bool
-	ch        chan *frame.SiteVisit
 }
 
 // Handle a single site visit

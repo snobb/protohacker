@@ -30,7 +30,7 @@ func getResponse(req request) response {
 	num := *req.Number
 
 	// check if the number is integer
-	if num != float64(int64(num)) {
+	if num != math.Floor(num) {
 		return response{Method: "isPrime", Prime: false}
 	}
 
