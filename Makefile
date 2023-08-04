@@ -52,35 +52,24 @@ build:
 	go build ${CFLAGS} ${MAIN}
 
 build-linux: clean
-	CGO_ENABLED=0 GOOS=linux go build ${CFLAGS} -a -installsuffix cgo ${MAIN}
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ${CFLAGS} -a -installsuffix cgo ${MAIN}
 
 build-rpi:
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=5 go build ${CFLAGS} ${MAIN}
 
 launch: check-env
-	@cp ${WORKDIR}/fly.toml . 2>/dev/null && \
-	sed "s/##TASK##/${TASK}/" Dockerfile.tmpl > Dockerfile && \
 	fly launch --copy-config --local-only --name ${FLY_APP} \
 		--no-deploy -r lhr && \
 	fly ips allocate-v6 -a ${FLY_APP} || echo 'error: export TASK variable'
-	@rm -f ./fly.toml
-	@rm -f ./Dockerfile
 
-deploy: check-env
-	@cp ${WORKDIR}/fly.toml . 2>/dev/null && \
-	sed "s/##TASK##/${TASK}/" Dockerfile.tmpl > Dockerfile && \
-	fly deploy --local-only || echo 'error: export TASK variable'
-	@rm -f ./Dockerfile
-	@rm -f ./fly.toml
+deploy: check-env build-linux
+	fly deploy --local-only -c ${WORKDIR}/fly.toml
 
 destroy:
 	fly destroy protohacker-go
 
 clean:
 	-rm -rf ${BIN}
-	-rm -rf ./dist
 	-rm -f ${COVEROUT}
-	-rm -f ./Dockerfile
-	-rm -f ./fly.toml
 
 .PHONY: build test
