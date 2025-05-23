@@ -1,0 +1,6 @@
+{
+    "go.formatTool": "goimports",
+    "gopls": {
+        "formatting.local": "proto"
+    },
+}

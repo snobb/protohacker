@@ -86,7 +86,7 @@ func authority(ctx context.Context, site uint32) (*Authority, error) {
 		return nil, err
 	}
 
-	if err := auth.getPopulations(ctx, site); err != nil {
+	if err := auth.getPopulations(ctx); err != nil {
 		auth.Close()
 		return nil, err
 	}
@@ -106,7 +106,7 @@ func authority(ctx context.Context, site uint32) (*Authority, error) {
 	return auth, nil
 }
 
-func (c *Authority) handleSiteVisit(ctx context.Context, sv *frame.SiteVisit) error {
+func (c *Authority) handleSiteVisit(_ context.Context, sv *frame.SiteVisit) error {
 	for name, tgt := range c.targets {
 		count, ok := sv.Populations[name]
 		if !ok {
@@ -185,7 +185,7 @@ func (c *Authority) dialSite(site uint32) error {
 	return nil
 }
 
-func (c *Authority) getPopulations(ctx context.Context, site uint32) error {
+func (c *Authority) getPopulations(_ context.Context) error {
 	frm, err := frame.ReadFrame(c.conn)
 	if err != nil {
 		log.Print("getPopulations: Error recieving frame: ", err.Error())
